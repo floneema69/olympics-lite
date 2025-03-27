@@ -2,19 +2,14 @@
 
 import sqlite3
 from pathlib import Path
+from sqlalchemy import create_engine, func, case, desc
+from sqlalchemy.orm import Session
 
+from Model.Class import Country, athlete, discipline, team, event, medal, discipline_athlete
 
-db = Path(__file__).parents[1] / 'database' / 'olympics.db'
+db_url = f"sqlite:///{Path(__file__).parents[1] / 'database' / 'olympics.db'}"
+engine = create_engine(db_url)
 
-
-def get_connection():
-    """Get connection to database."""
-    connection = sqlite3.connect(db, detect_types=sqlite3.PARSE_DECLTYPES)
-    connection.row_factory = sqlite3.Row
-    cursor = connection.cursor()
-    cursor.execute('PRAGMA foreign_keys')
-    cursor.close()
-    return connection
 
 
 def get_countries(id=None):
@@ -23,19 +18,11 @@ def get_countries(id=None):
     If id is not None, the list contains only the country with given id.
 
     """
-    cursor = get_connection().cursor()
+    session = Session(engine)
     if id is None:
-        rows = cursor.execute('''
-            SELECT *
-            FROM country
-        ''').fetchall()
+        rows = session.query(Country).all()
     else:
-        rows = cursor.execute('''
-            SELECT *
-            FROM country
-            WHERE id = ?
-        ''', (id,)).fetchall()
-    cursor.close()
+        rows = session.query(Country).filter(Country.id == id).all()
     return rows
 
 
@@ -45,19 +32,11 @@ def get_athletes(id=None):
     If id is not None, the list contains only the athlete with given id.
 
     """
-    cursor = get_connection().cursor()
+    session = Session(engine)
     if id is None:
-        rows = cursor.execute('''
-            SELECT *
-            FROM athlete
-        ''').fetchall()
+        rows = session.query(athlete).all()
     else:
-        rows = cursor.execute('''
-            SELECT *
-            FROM athlete
-            WHERE id = ?
-        ''', (id,)).fetchall()
-    cursor.close()
+        rows = session.query(athlete).filter(athlete.id == id).all()
     return rows
 
 
@@ -67,19 +46,11 @@ def get_disciplines(id=None):
     If id is not None, the list contains only the discipline with given id.
 
     """
-    cursor = get_connection().cursor()
+    session = Session(engine)
     if id is None:
-        rows = cursor.execute('''
-            SELECT *
-            FROM discipline
-        ''').fetchall()
+        rows = session.query(discipline).all()
     else:
-        rows = cursor.execute('''
-            SELECT *
-            FROM discipline
-            WHERE id = ?
-        ''', (id,)).fetchall()
-    cursor.close()
+        rows = session.query(discipline).filter(discipline.id == id).all()
     return rows
 
 
@@ -89,19 +60,11 @@ def get_teams(id=None):
     If id is not None, the list contains only the team with given id.
 
     """
-    cursor = get_connection().cursor()
+    session = Session(engine)
     if id is None:
-        rows = cursor.execute('''
-            SELECT *
-            FROM team
-        ''').fetchall()
+        rows = session.query(team).all()
     else:
-        rows = cursor.execute('''
-            SELECT *
-            FROM team
-            WHERE id = ?
-        ''', (id,)).fetchall()
-    cursor.close()
+        rows = session.query(team).filter(team.id == id).all()
     return rows
 
 
@@ -111,19 +74,11 @@ def get_events(id=None):
     If id is not None, the list contains only the event with given id.
 
     """
-    cursor = get_connection().cursor()
+    session = Session(engine)
     if id is None:
-        rows = cursor.execute('''
-            SELECT *
-            FROM event
-        ''').fetchall()
+        rows = session.query(event).all()
     else:
-        rows = cursor.execute('''
-            SELECT *
-            FROM event
-            WHERE id = ?
-        ''', (id,)).fetchall()
-    cursor.close()
+        rows = session.query(event).filter(event.id == id).all()
     return rows
 
 
@@ -133,63 +88,44 @@ def get_medals(id=None):
     If id is not None, the list contains only the medal with given id.
 
     """
-    cursor = get_connection().cursor()
+    session = Session(engine)
     if id is None:
-        rows = cursor.execute('''
-            SELECT *
-            FROM medal
-        ''').fetchall()
+        rows = session.query(medal).all()
     else:
-        rows = cursor.execute('''
-            SELECT *
-            FROM medal
-            WHERE id = ?
-        ''', (id,)).fetchall()
-    cursor.close()
+        rows = session.query(medal).filter(medal.id == id).all()
     return rows
 
 
 def get_discipline_athletes(discipline_id):
     """Get athlete ids linked to given discipline id."""
-    cursor = get_connection().cursor()
-    rows = cursor.execute('''
-        SELECT *
-        FROM discipline_athlete
-        WHERE discipline_id = ?
-    ''', (discipline_id,)).fetchall()
-    cursor.close()
+    session = Session(engine)
+    rows = session.query(discipline_athlete).filter(discipline_athlete.discipline_id == discipline_id).all()
     return rows
 
 
-def get_top_countries(top=10):
-    """Get medal count ranking of countries.
+def get_top_countries( top=10):
+    """Get medal count ranking of countries."""
+    session = Session(engine)
+    gold_count = func.sum(case((medal.type == 'gold', 1), else_=0)).label("gold")
+    silver_count = func.sum(case((medal.type == 'silver', 1), else_=0)).label("silver")
+    bronze_count = func.sum(case((medal.type == 'bronze', 1), else_=0)).label("bronze")
 
-    Countries are ranked by gold medals, then silver medals, then bronze
-    medals.
+    query = (
+        session.query(
+            Country.name,
+            gold_count,
+            silver_count,
+            bronze_count
+        )
+        .outerjoin(team, team.country_id == Country.id)
+        .outerjoin(athlete, athlete.country_id == Country.id)
+        .outerjoin(medal, (medal.athlete_id == athlete.id) | (medal.team_id == team.id))
+        .group_by(Country.id)
+        .order_by(desc("gold"), desc("silver"), desc("bronze"))
+        .limit(top)
+    )
 
-    Number of countries is limited to the given top number.
-
-    """
-    cursor = get_connection().cursor()
-    rows = cursor.execute('''
-        SELECT
-            country.name,
-            sum(CASE type WHEN 'gold' THEN 1 ELSE 0 END) AS gold,
-            sum(CASE type WHEN 'silver' THEN 1 ELSE 0 END) AS silver,
-            sum(CASE type WHEN 'bronze' THEN 1 ELSE 0 END) AS bronze
-        FROM medal
-        LEFT JOIN athlete
-        ON medal.athlete_id = athlete.id
-        LEFT JOIN team
-        ON medal.team_id = team.id
-        RIGHT JOIN country
-        ON (country.id IN (team.country_id, athlete.country_id))
-        GROUP BY country.id
-        ORDER BY gold DESC, silver DESC, bronze DESC
-        LIMIT ?
-    ''', (top,)).fetchall()
-    cursor.close()
-    return rows
+    return query.all()
 
 
 def get_collective_medals(team_id=None):
@@ -199,30 +135,26 @@ def get_collective_medals(team_id=None):
     given id.
 
     """
-    cursor = get_connection().cursor()
-    sql = '''
-        SELECT
-            country.name,
-            discipline.name AS discipline,
-            event.name AS event,
+    session = Session(engine)
+    query = (
+        session.query(
+            Country.name,
+            discipline.name.label("discipline"),
+            event.name.label("event"),
             medal.type,
             medal.date
-        FROM medal
-        JOIN team
-        ON medal.team_id = team.id
-        JOIN country
-        ON team.country_id = country.id
-        JOIN event
-        ON medal.event_id = event.id
-        JOIN discipline
-        ON event.discipline_id = discipline.id
-    '''
-    if team_id is None:
-        rows = cursor.execute(sql).fetchall()
-    else:
-        sql += 'WHERE team.id = ?'
-        rows = cursor.execute(sql, (team_id,)).fetchall()
-    cursor.close()
+        )
+        .join(team, medal.team_id == team.id)
+        .join(Country, team.country_id == Country.id)
+        .join(event, medal.event_id == event.id)
+        .join(discipline, event.discipline_id == discipline.id)
+    )
+
+    if team_id is not None:
+        query = query.filter(team.id == team_id)
+
+    rows = query.all()
+    session.close()
     return rows
 
 
@@ -232,21 +164,20 @@ def get_top_collective(top=10):
     Number of countries is limited to the given top number.
 
     """
-    cursor = get_connection().cursor()
-    rows = cursor.execute('''
-        SELECT
-            country.name AS country,
-            sum(1) AS medals
-        FROM medal
-        JOIN team
-        ON medal.team_id = team.id
-        JOIN country
-        ON team.country_id = country.id
-        GROUP BY country
-        ORDER BY medals DESC
-        LIMIT ?
-    ''', (top,)).fetchall()
-    cursor.close()
+    session = Session(engine)
+    query = (
+        session.query(
+            Country.name.label("country"),
+            func.count(medal.id).label("medals")
+        )
+        .join(team, medal.team_id == team.id)
+        .join(Country, team.country_id == Country.id)
+        .group_by(Country.name)
+        .order_by(desc("medals"))
+        .limit(top)
+    )
+    rows = query.all()
+    session.close()
     return rows
 
 
@@ -257,31 +188,24 @@ def get_individual_medals(athlete_id=None):
     with given id.
 
     """
-    cursor = get_connection().cursor()
-    sql = '''
-        SELECT
+    session = Session(engine)
+    query = (
+        session.query(
             athlete.name,
-            country.name AS country,
-            discipline.name AS discipline,
-            event.name AS event,
+            Country.name.label("country"),
+            discipline.name.label("discipline"),
+            event.name.label("event"),
             medal.type,
             medal.date
-        FROM medal
-        JOIN athlete
-        ON medal.athlete_id = athlete.id
-        JOIN country
-        ON athlete.country_id = country.id
-        JOIN event
-        ON medal.event_id = event.id
-        JOIN discipline
-        ON event.discipline_id = discipline.id
-    '''
-    if athlete_id is None:
-        rows = cursor.execute(sql).fetchall()
-    else:
-        sql += 'WHERE athlete.id = ?'
-        rows = cursor.execute(sql, (athlete_id,)).fetchall()
-    cursor.close()
+        )
+        .join(Country, athlete.country_id == Country.id)
+        .join(event, medal.event_id == event.id)
+        .join(discipline, event.discipline_id == discipline.id)
+    )
+    if athlete_id is not None:
+        query = query.filter(athlete.id == athlete_id)
+    rows = query.all()
+    session.close()
     return rows
 
 
@@ -291,21 +215,20 @@ def get_top_individual(top=10):
     Number of athletes is limited to the given top number.
 
     """
-    cursor = get_connection().cursor()
-    rows = cursor.execute('''
-        SELECT
+    session = Session(engine)
+    query = (
+        session.query(
             athlete.name,
             athlete.gender,
-            country.name AS country,
-            sum(1) AS medals
-        FROM medal
-        JOIN athlete
-        ON medal.athlete_id = athlete.id
-        JOIN country
-        ON athlete.country_id = country.id
-        GROUP BY athlete.name, country
-        ORDER BY medals DESC
-        LIMIT ?
-    ''', (top,)).fetchall()
-    cursor.close()
+            Country.name.label("country"),
+            func.count(medal.id).label("medals")
+        )
+        .join(medal, medal.athlete_id == athlete.id)
+        .join(Country, athlete.country_id == Country.id)
+        .group_by(athlete.name, athlete.gender, Country.name)
+        .order_by(desc("medals"))
+        .limit(top)
+    )
+    rows = query.all()
+    session.close()
     return rows
